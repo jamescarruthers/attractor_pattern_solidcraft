@@ -319,6 +319,17 @@ pub fn preview(engine: &mut dyn Engine, p: &Params) -> Result<Value, String> {
         })
         .collect();
     let mut out = summary(p, &plan);
+    if p.operation != Operation::New && plan.instances.len() > 30 {
+        set(
+            &mut out,
+            "note",
+            json!(format!(
+                "{} copies to {}: a boolean with many tools can take longer than the 30 seconds a plugin run may last. If the run stops at its deadline, use Result: new, then Combine the copies",
+                plan.instances.len(),
+                p.operation.as_str()
+            )),
+        );
+    }
     set(&mut out, "count", json!(plan.instances.len()));
     set(&mut out, "points", json!(points));
     Ok(out)

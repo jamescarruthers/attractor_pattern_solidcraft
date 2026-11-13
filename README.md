@@ -90,7 +90,12 @@ colour come in `levels` steps, because each step costs a prepared copy of the bo
 reports the count (`budget.engine_calls`) before anything is made. `pattern` checks it first and
 refuses, changing nothing, when it would not fit.
 
-Each run must also finish within 30 seconds.
+Each run must also finish within 30 seconds, and that includes the time SolidCraft spends on
+the join, cut or intersect. Booleans with many copies are slow: in a test build, cutting 114
+spheres from a plate took 67 seconds by itself, while 33 spheres took under 3 seconds. `preview`
+adds a `note` when a boolean has more than 30 copies. If a run stops with "plugin limit exceeded:
+deadline", nothing has changed: run it again with **Result** `new`, then join or cut the copies
+with SolidCraft's own Combine, which has no such limit.
 
 ## How it maps from the Onshape feature
 
@@ -115,6 +120,12 @@ cargo test
 ```
 
 The unit tests cover the maths, the face outlines, the grid and the parameter checks.
+
+Version 0.2.0 was also installed from its zip into SolidCraft 0.41's command-line tool
+(`plugin.install`) and run there (`plugin.inspect`, `plugin.run`): a preview; pins on a plate
+with scale, colour and turns; per-axis scale, turns and depth joined into the plate; spheres cut
+from a plate with a hole; studs around a cylinder; and the refusals for too many copies and for
+a point off the face. Each pattern was one undo step. The Plugins menu's form was not tried.
 
 ## Credit and licence
 
