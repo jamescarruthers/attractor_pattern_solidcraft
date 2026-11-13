@@ -6,9 +6,6 @@ use serde_json::Value;
 /// harnesses supply their own.
 pub trait Engine {
     fn run(&mut self, command: &str, args: &Value) -> Result<Value, String>;
-
-    /// A message for the user's log. Ignored unless the host shows it.
-    fn log(&mut self, _message: &str) {}
 }
 
 /// Run a command and add its name to any error.
