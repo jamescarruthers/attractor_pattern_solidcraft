@@ -6,12 +6,12 @@ use crate::surface::{self, EdgeInfo, FaceInfo, Surface, Traced};
 use crate::vec::V3;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Faces and edges of bodies, read once per body.
 #[derive(Default)]
 pub struct Bodies {
-    cache: HashMap<String, BodyGeometry>,
+    cache: BTreeMap<String, BodyGeometry>,
 }
 
 pub struct BodyGeometry {
