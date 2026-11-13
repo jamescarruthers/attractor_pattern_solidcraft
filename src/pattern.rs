@@ -1,13 +1,20 @@
 //! The pattern itself: where each copy goes and how it is changed, then the engine commands
 //! that make it.
+//!
+//! SolidCraft 0.41 allows 256 engine calls per plugin run, so copies are made from a few
+//! prepared seeds. The distance is cut into `levels` steps; each step that is used gets one
+//! copy of the body, scaled and coloured for that step and moved into its own frame. Every
+//! copy on the face is then one `solid.move` from its step's seed, with its exact turn and
+//! depth. The seeds are removed at the end.
 
 use crate::attractor::{self, Bodies};
 use crate::colour;
 use crate::engine::{Engine, created_bodies, run};
 use crate::grid;
-use crate::params::{Axis, FalloffKind, MAX_INSTANCES, Operation, Params};
-use crate::vec::{Frame, M3, Rigid, V3, X, Y, Z};
+use crate::params::{Axis, FalloffKind, MAX_CALLS, Operation, Params};
+use crate::vec::{Frame, M3, Rigid, V3, X, Y, Z, ZERO};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// One copy, worked out but not yet made.
 pub struct Instance {
@@ -19,7 +26,13 @@ pub struct Instance {
     pub distance: f64,
     /// Turn about the body frame's chosen axis (degrees).
     pub angle: f64,
-    /// Scale along the body frame's axes.
+    /// Which scale and colour step it takes, when scale or colour is on.
+    pub level: Option<i64>,
+}
+
+/// What one step of scale and colour does.
+#[derive(Clone, Debug)]
+pub struct Level {
     pub scale: [f64; 3],
     /// "#rrggbb" and opacity 0..1.
     pub colour: Option<(String, f64)>,
@@ -34,7 +47,13 @@ pub struct Plan {
     /// The distances that map to "near" and "far".
     pub near_far: [f64; 2],
     pub instances: Vec<Instance>,
+    /// The steps the copies use, by index.
+    pub levels: BTreeMap<i64, Level>,
     pub body_frame: Frame,
+    /// Visible bodies before the run, apart from the one being copied.
+    pub others: Vec<String>,
+    /// Engine calls made while planning.
+    pub calls_so_far: usize,
 }
 
 /// `value` mapped from `[in0, in1]` to `[out0, out1]`, not clamped; `out0` when the input
@@ -44,10 +63,41 @@ fn remap(value: f64, in0: f64, in1: f64, out0: f64, out1: f64) -> f64 {
     if span.abs() < 1e-12 { out0 } else { out0 + (value - in0) * (out1 - out0) / span }
 }
 
-pub fn plan(engine: &mut dyn Engine, p: &Params) -> Result<Plan, String> {
-    if !other_bodies(engine, &[])?.contains(&p.body) {
-        return Err(format!("no visible body `{}` to pattern", p.body));
+/// Counts the engine calls a plan makes.
+struct Counting<'a> {
+    inner: &'a mut dyn Engine,
+    calls: usize,
+}
+
+impl Engine for Counting<'_> {
+    fn run(&mut self, command: &str, args: &Value) -> Result<Value, String> {
+        self.calls += 1;
+        self.inner.run(command, args)
     }
+}
+
+fn visible_bodies(engine: &mut dyn Engine) -> Result<Vec<String>, String> {
+    let reply = run(engine, "document.inspect", &json!({}))?;
+    Ok(reply
+        .get("bodies")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|b| b.get("visible").and_then(Value::as_bool).unwrap_or(true) && b.get("removed_later").and_then(Value::as_bool) != Some(true))
+        .filter_map(|b| b.get("name").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect())
+}
+
+pub fn plan(engine: &mut dyn Engine, p: &Params) -> Result<Plan, String> {
+    let mut engine = Counting { inner: engine, calls: 0 };
+    let engine = &mut engine;
+    let mut others = visible_bodies(engine)?;
+    let Some(at) = others.iter().position(|n| *n == p.body) else {
+        return Err(format!("no visible body `{}` to pattern", p.body));
+    };
+    others.remove(at);
+
     let mut bodies = Bodies::default();
     let face = attractor::find_face(engine, &mut bodies, &p.face_body, &p.face, p.flip_normal)?;
     let attractors = attractor::resolve(engine, &mut bodies, &p.attractors)?;
@@ -113,9 +163,12 @@ pub fn plan(engine: &mut dyn Engine, p: &Params) -> Result<Plan, String> {
         Some(c) => Some((colour::rgb(&c.near)?, colour::rgb(&c.far)?, c.near_alpha / 255.0, c.far_alpha / 255.0)),
         None => None,
     };
+    let stepped = p.scale.is_some() || colours.is_some();
+    let steps = f64::from(p.levels.max(2) - 1);
 
     let mut beyond_cutoff = 0;
     let mut instances = Vec::new();
+    let mut levels = BTreeMap::new();
     for (frame, mut d) in samples {
         if p.cutoff.is_some_and(|c| d > c) {
             beyond_cutoff += 1;
@@ -126,23 +179,45 @@ pub fn plan(engine: &mut dyn Engine, p: &Params) -> Result<Plan, String> {
         }
         let map = |near: f64, far: f64| remap(d, near_d, far_d, near, far);
         let angle = p.rotation.as_ref().map_or(0.0, |r| map(r.near, r.far));
-        let scale = match &p.scale {
-            Some(s) => {
-                let (n, f) = (s.near.xyz(), s.far.xyz());
-                [map(n[0], f[0]).max(1e-6), map(n[1], f[1]).max(1e-6), map(n[2], f[2]).max(1e-6)]
-            }
-            None => [1.0; 3],
-        };
         let depth = p.depth.as_ref().map_or(0.0, |dp| map(dp.near, dp.far));
-        let colour = colours.map(|(cn, cf, an, af)| {
-            let ch = |i: usize| map(*cn.get(i).unwrap_or(&0.0), *cf.get(i).unwrap_or(&0.0)).clamp(0.0, 1.0);
-            (colour::to_hex([ch(0), ch(1), ch(2)]), map(an, af).clamp(0.0, 1.0))
-        });
+        let level = stepped.then(|| (remap(d, near_d, far_d, 0.0, 1.0) * steps).round() as i64);
+        if let Some(i) = level {
+            levels.entry(i).or_insert_with(|| {
+                // The step's own distance, so every copy in it looks the same.
+                let t = i as f64 / steps;
+                let at = |near: f64, far: f64| near + t * (far - near);
+                let scale = match &p.scale {
+                    Some(s) => {
+                        let (n, f) = (s.near.xyz(), s.far.xyz());
+                        [at(n[0], f[0]).max(1e-6), at(n[1], f[1]).max(1e-6), at(n[2], f[2]).max(1e-6)]
+                    }
+                    None => [1.0; 3],
+                };
+                let colour = colours.map(|(cn, cf, an, af)| {
+                    let ch = |k: usize| at(*cn.get(k).unwrap_or(&0.0), *cf.get(k).unwrap_or(&0.0)).clamp(0.0, 1.0);
+                    (colour::to_hex([ch(0), ch(1), ch(2)]), at(an, af).clamp(0.0, 1.0))
+                });
+                Level { scale, colour }
+            });
+        }
         let on_face = frame.origin;
         let frame = Frame { origin: frame.origin - frame.z * depth, ..frame };
-        instances.push(Instance { frame, on_face, distance: d, angle, scale, colour });
+        instances.push(Instance { frame, on_face, distance: d, angle, level });
     }
-    Ok(Plan { face_kind: face.kind(), candidates, off_face, near_border, beyond_cutoff, near_far: [near_d, far_d], instances, body_frame })
+    let calls_so_far = engine.calls;
+    Ok(Plan {
+        face_kind: face.kind(),
+        candidates,
+        off_face,
+        near_border,
+        beyond_cutoff,
+        near_far: [near_d, far_d],
+        instances,
+        levels,
+        body_frame,
+        others,
+        calls_so_far,
+    })
 }
 
 fn rotation_axis(p: &Params) -> V3 {
@@ -153,9 +228,16 @@ fn rotation_axis(p: &Params) -> V3 {
     }
 }
 
+/// Add a field to a JSON object (a no-op on anything else).
+fn set(v: &mut Value, key: &str, value: Value) {
+    if let Some(o) = v.as_object_mut() {
+        o.insert(key.to_owned(), value);
+    }
+}
+
 /// `solid.move` parameters for a rigid motion (rotate about the world origin, then translate).
-fn move_params(body: &str, m: &Rigid, copy: bool) -> Value {
-    let mut v = json!({ "bodies": [body], "translate": m.t.to_array() });
+fn move_params(bodies: &[&str], m: &Rigid, copy: bool) -> Value {
+    let mut v = json!({ "bodies": bodies, "translate": m.t.to_array() });
     if copy {
         set(&mut v, "copy", json!(true));
     }
@@ -166,74 +248,55 @@ fn move_params(body: &str, m: &Rigid, copy: bool) -> Value {
     v
 }
 
-/// Add a field to a JSON object (a no-op on anything else).
-fn set(v: &mut Value, key: &str, value: Value) {
-    if let Some(o) = v.as_object_mut() {
-        o.insert(key.to_owned(), value);
-    }
-}
-
 fn is_one(k: f64) -> bool {
     (k - 1.0).abs() < 1e-9
 }
 
-/// Make one copy; returns its body name.
-fn place(engine: &mut dyn Engine, p: &Params, plan: &Plan, inst: &Instance) -> Result<String, String> {
-    let to_body = plan.body_frame.from_world();
-    let turn = Rigid { r: M3::rotation(rotation_axis(p), inst.angle.to_radians()), t: crate::vec::ZERO };
-    let onto_face = inst.frame.to_world().then_after(&turn);
-    let [sx, sy, sz] = inst.scale;
-    let copy_of = |reply: &Value| created_bodies(reply).into_iter().next().ok_or_else(|| "solid.move made no copy".to_owned());
-    if is_one(sx) && is_one(sy) && is_one(sz) {
-        let reply = run(engine, "solid.move", &move_params(&p.body, &onto_face.then_after(&to_body), true))?;
-        return copy_of(&reply);
-    }
-    if (sx - sy).abs() < 1e-12 && (sy - sz).abs() < 1e-12 {
-        // A uniform scale commutes with turns, so place first and scale about the point.
-        let name = copy_of(&run(engine, "solid.move", &move_params(&p.body, &onto_face.then_after(&to_body), true))?)?;
-        run(engine, "solid.scale", &json!({ "bodies": [name], "factor": sx, "origin": inst.frame.origin.to_array() }))?;
-        return Ok(name);
-    }
-    // Scale along the body frame's axes: bring the copy to the world frame, scale there, then place it.
-    let name = copy_of(&run(engine, "solid.move", &move_params(&p.body, &to_body, true))?)?;
-    run(engine, "solid.scale", &json!({ "bodies": [name], "factors": [sx, sy, sz], "origin": [0.0, 0.0, 0.0] }))?;
-    if !onto_face.is_identity() {
-        run(engine, "solid.move", &move_params(&name, &onto_face, false))?;
-    }
-    Ok(name)
+/// The cost of a step's seed: the copy, a scale unless it is 1, and a colour if any.
+fn level_calls(l: &Level) -> usize {
+    1 + usize::from(!l.scale.iter().all(|k| is_one(*k))) + usize::from(l.colour.is_some())
 }
 
-/// Visible bodies other than the ones named.
-fn other_bodies(engine: &mut dyn Engine, except: &[String]) -> Result<Vec<String>, String> {
-    let reply = run(engine, "document.inspect", &json!({}))?;
-    Ok(reply
-        .get("bodies")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|b| b.get("visible").and_then(Value::as_bool).unwrap_or(true) && b.get("removed_later").and_then(Value::as_bool) != Some(true))
-        .filter_map(|b| b.get("name").and_then(Value::as_str))
-        .filter(|n| !except.iter().any(|e| e == n))
-        .map(str::to_owned)
-        .collect())
+/// The merge targets: the given scope, or every other visible body.
+fn targets(p: &Params, plan: &Plan) -> Vec<String> {
+    match (&p.merge_scope, p.operation) {
+        (_, Operation::New) => Vec::new(),
+        (Some(list), _) => list.clone(),
+        (None, _) => plan.others.clone(),
+    }
 }
 
-fn summary(plan: &Plan) -> Value {
+/// The engine calls `pattern` makes after planning.
+fn calls_to_make(p: &Params, plan: &Plan) -> usize {
+    let seeds: usize = plan.levels.values().map(level_calls).sum();
+    let combine = match p.operation {
+        Operation::New => 0,
+        Operation::Join => 1,
+        Operation::Cut | Operation::Intersect => targets(p, plan).len(),
+    };
+    let remove = usize::from(!p.keep_input || !plan.levels.is_empty());
+    seeds + plan.instances.len() + combine + remove
+}
+
+fn budget(p: &Params, plan: &Plan) -> Value {
+    let total = plan.calls_so_far + calls_to_make(p, plan);
+    json!({ "engine_calls": total, "limit": MAX_CALLS, "fits": total <= MAX_CALLS, "levels_used": plan.levels.len() })
+}
+
+fn summary(p: &Params, plan: &Plan) -> Value {
     json!({
         "face": plan.face_kind,
         "grid_points": plan.candidates,
         "culled": { "off_face": plan.off_face, "near_border": plan.near_border, "beyond_cutoff": plan.beyond_cutoff },
         "near_far_mm": plan.near_far,
+        "budget": budget(p, plan),
     })
 }
 
-fn warnings(n: usize) -> Vec<String> {
-    match n {
-        0 => vec!["no copies: every point was culled".into()],
-        501..=1000 => vec![format!("{n} copies: expect a slow rebuild")],
-        1001.. => vec![format!("{n} copies, each a timeline feature: rebuilds will be very slow")],
-        _ => Vec::new(),
-    }
+/// The largest number of copies that would fit, for the error message.
+fn copies_that_fit(p: &Params, plan: &Plan) -> usize {
+    let fixed = plan.calls_so_far + calls_to_make(p, plan) - plan.instances.len();
+    MAX_CALLS.saturating_sub(fixed)
 }
 
 /// The `preview` entry: where the copies would go, without changing the design.
@@ -242,17 +305,33 @@ pub fn preview(engine: &mut dyn Engine, p: &Params) -> Result<Value, String> {
     let points: Vec<Value> = plan
         .instances
         .iter()
-        .take(5000)
-        .map(|i| json!({ "at": i.on_face.to_array(), "normal": i.frame.z.to_array(), "distance": i.distance, "angle": i.angle, "scale": i.scale, "color": i.colour.as_ref().map(|c| &c.0) }))
+        .take(2000)
+        .map(|i| {
+            let level = i.level.and_then(|l| plan.levels.get(&l));
+            json!({
+                "at": i.on_face.to_array(),
+                "normal": i.frame.z.to_array(),
+                "distance": i.distance,
+                "angle": i.angle,
+                "scale": level.map(|l| l.scale),
+                "color": level.and_then(|l| l.colour.as_ref().map(|c| &c.0)),
+            })
+        })
         .collect();
-    let mut out = summary(&plan);
+    let mut out = summary(p, &plan);
+    if p.operation != Operation::New && plan.instances.len() > 30 {
+        set(
+            &mut out,
+            "note",
+            json!(format!(
+                "{} copies to {}: a boolean with many tools can take longer than the 30 seconds a plugin run may last. If the run stops at its deadline, use Result: new, then Combine the copies",
+                plan.instances.len(),
+                p.operation.as_str()
+            )),
+        );
+    }
     set(&mut out, "count", json!(plan.instances.len()));
     set(&mut out, "points", json!(points));
-    let mut w = warnings(plan.instances.len());
-    if plan.instances.len() > MAX_INSTANCES {
-        w.push(format!("`pattern` makes at most {MAX_INSTANCES} copies; reduce the grid or use a cutoff"));
-    }
-    set(&mut out, "warnings", json!(w));
     Ok(out)
 }
 
@@ -260,65 +339,82 @@ pub fn preview(engine: &mut dyn Engine, p: &Params) -> Result<Value, String> {
 pub fn pattern(engine: &mut dyn Engine, p: &Params) -> Result<Value, String> {
     let plan = plan(engine, p)?;
     let n = plan.instances.len();
-    if n > MAX_INSTANCES {
-        return Err(format!("{n} copies is more than the {MAX_INSTANCES} one run makes; reduce the grid, raise the border or use a cutoff"));
+    if n == 0 {
+        return Err(format!("no copies to make: all {} points were culled", plan.candidates));
     }
-    engine.log(&format!("placing {n} copies on the {}", plan.face_kind));
-    let mut made = Vec::with_capacity(n);
-    for inst in &plan.instances {
-        let name = place(engine, p, &plan, inst)?;
-        if let Some((hex, opacity)) = &inst.colour {
+    let total = plan.calls_so_far + calls_to_make(p, &plan);
+    if total > MAX_CALLS {
+        return Err(format!(
+            "{n} copies need {total} engine calls, and SolidCraft allows {MAX_CALLS} per run; about {} copies fit. Use smaller u_count and v_count, a cutoff, a larger border or fewer levels",
+            copies_that_fit(p, &plan)
+        ));
+    }
+    let targets = targets(p, &plan);
+    if p.operation != Operation::New && targets.is_empty() {
+        return Err(format!("nothing to {} with: no other visible bodies", p.operation.as_str()));
+    }
+
+    let to_body = plan.body_frame.from_world();
+    let first_copy = |reply: &Value| created_bodies(reply).into_iter().next().ok_or_else(|| "solid.move made no copy".to_owned());
+
+    // One seed per step, in the body's own frame (now the world's), scaled and coloured.
+    let mut seeds: BTreeMap<i64, String> = BTreeMap::new();
+    for (i, level) in &plan.levels {
+        let name = first_copy(&run(engine, "solid.move", &move_params(&[&p.body], &to_body, true))?)?;
+        let [sx, sy, sz] = level.scale;
+        if !(is_one(sx) && is_one(sy) && is_one(sz)) {
+            let scale = if (sx - sy).abs() < 1e-12 && (sy - sz).abs() < 1e-12 {
+                json!({ "bodies": [name], "factor": sx, "origin": [0.0, 0.0, 0.0] })
+            } else {
+                json!({ "bodies": [name], "factors": [sx, sy, sz], "origin": [0.0, 0.0, 0.0] })
+            };
+            run(engine, "solid.scale", &scale)?;
+        }
+        if let Some((hex, opacity)) = &level.colour {
             run(engine, "appearance.assign", &json!({ "bodies": [name], "color": hex, "opacity": opacity }))?;
         }
-        made.push(name);
+        seeds.insert(*i, name);
     }
 
-    let mut bodies = made.clone();
-    if let Some(prefix) = &p.name_prefix {
-        bodies.clear();
-        for (i, name) in made.iter().enumerate() {
-            let new = format!("{prefix} {}", i + 1);
-            run(engine, "body.rename", &json!({ "body": name, "name": new }))?;
-            bodies.push(new);
-        }
+    let mut made = Vec::with_capacity(n);
+    for inst in &plan.instances {
+        let turn = Rigid { r: M3::rotation(rotation_axis(p), inst.angle.to_radians()), t: ZERO };
+        let onto_face = inst.frame.to_world().then_after(&turn);
+        let (source, motion) = match inst.level.and_then(|l| seeds.get(&l)) {
+            Some(seed) => (seed.as_str(), onto_face),
+            None => (p.body.as_str(), onto_face.then_after(&to_body)),
+        };
+        made.push(first_copy(&run(engine, "solid.move", &move_params(&[source], &motion, true))?)?);
     }
 
-    let mut targets = Vec::new();
-    if p.operation != Operation::New && !made.is_empty() {
-        let mut except = made.clone();
-        except.push(p.body.clone());
-        targets = match &p.merge_scope {
-            Some(list) => list.clone(),
-            None => other_bodies(engine, &except)?,
-        };
-        let Some((first, rest)) = targets.split_first() else {
-            return Err(format!("nothing to {} with: no other visible bodies", p.operation.as_str()));
-        };
-        match p.operation {
-            Operation::Join => {
+    match p.operation {
+        Operation::New => {}
+        Operation::Join => {
+            if let Some((first, rest)) = targets.split_first() {
                 let tools: Vec<&String> = rest.iter().chain(made.iter()).collect();
                 run(engine, "solid.combine", &json!({ "target": first, "tools": tools, "operation": "join" }))?;
             }
-            Operation::Cut | Operation::Intersect => {
-                for (i, t) in targets.iter().enumerate() {
-                    let last = i + 1 == targets.len();
-                    run(engine, "solid.combine", &json!({ "target": t, "tools": made, "operation": p.operation.as_str(), "keep_tools": !last }))?;
-                }
-            }
-            Operation::New => {}
         }
-        bodies.clear();
+        Operation::Cut | Operation::Intersect => {
+            for (i, t) in targets.iter().enumerate() {
+                let last = i + 1 == targets.len();
+                run(engine, "solid.combine", &json!({ "target": t, "tools": made, "operation": p.operation.as_str(), "keep_tools": !last }))?;
+            }
+        }
     }
 
+    let mut remove: Vec<&str> = seeds.values().map(String::as_str).collect();
     if !p.keep_input {
-        run(engine, "solid.remove", &json!({ "bodies": [p.body] }))?;
+        remove.push(&p.body);
+    }
+    if !remove.is_empty() {
+        run(engine, "solid.remove", &json!({ "bodies": remove }))?;
     }
 
-    let mut out = summary(&plan);
+    let mut out = summary(p, &plan);
     set(&mut out, "instances", json!(n));
-    set(&mut out, "bodies", json!(bodies));
+    set(&mut out, "bodies", json!(if p.operation == Operation::New { made } else { Vec::new() }));
     set(&mut out, "merged_into", json!(targets));
-    set(&mut out, "warnings", json!(warnings(n)));
     Ok(out)
 }
 
@@ -335,7 +431,7 @@ mod tests {
     #[test]
     fn move_params_round_trip() {
         let m = Rigid { r: M3::rotation(Y, 1.0), t: V3::new(1.0, 2.0, 3.0) };
-        let v = move_params("B", &m, true);
+        let v = move_params(&["B"], &m, true);
         assert_eq!(v["copy"], json!(true));
         let axis = V3::from_array([v["axis"][0].as_f64().unwrap(), v["axis"][1].as_f64().unwrap(), v["axis"][2].as_f64().unwrap()]);
         let back = M3::rotation(axis, v["angle"].as_f64().unwrap().to_radians());
