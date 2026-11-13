@@ -19,9 +19,6 @@ of that WIT file is in `wit/`. If the interface changes before it ships, `src/li
 WebAssembly glue) and `plugin.json` will need to follow; the rest talks to SolidCraft only
 through its JSON engine commands, which MCP and scripts already use.
 
-The geometry has been checked against SolidCraft's real engine by running the plugin's code
-natively against `solidcraft_engine::Session` (see "Testing" below).
-
 ## Build and install
 
 ```bash
@@ -109,10 +106,9 @@ frame with `body_frame`.
 cargo test
 ```
 
-The unit tests cover the maths, the face outlines, the grid and the parameter checks. The
-geometry was also checked by running the plugin's code natively against SolidCraft's engine:
-pins on a plate, a join with per-axis scale and turns, random spheres cut from a plate with a
-hole, studs around a cylinder, and error cases.
+The unit tests cover the maths, the face outlines, the grid and the parameter checks. They use
+the face and edge data SolidCraft's `model.faces` and `model.edges` return, but not the engine
+itself.
 
 ## Credit and licence
 
