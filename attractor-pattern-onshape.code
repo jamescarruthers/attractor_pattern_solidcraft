@@ -1,0 +1,834 @@
+
+// This custom feature is owned by Evan Reese and distributed by The Onsherpa. It may not be redistributed without permission of the owner. Copywright © 2025 Evan Reese.
+
+FeatureScript 1732;
+import(path : "onshape/std/geometry.fs", version : "1732.0");
+
+export import(path : "onshape/std/booleanoperationtype.gen.fs", version : "1732.0");
+export import(path : "onshape/std/tool.fs", version : "1732.0");
+export import(path : "onshape/std/extrudeCommon.fs", version : "1732.0");
+import(path : "bd0f00b12a2b3d51e045022a", version : "d79c8e1da5e240df7b6a30a5");
+icon::import(path : "f163d6036dbc0a9c53216b0c", version : "8c1f7e2c97cdc9219138ac81");
+
+export enum gridType
+{
+    Rectangular,
+    Triangular,
+    Random
+}
+
+export enum rotationAxis
+{
+    annotation { "Name" : "X axis" }
+    X_AXIS,
+    annotation { "Name" : "Y axis" }
+    Y_AXIS,
+    annotation { "Name" : "Z axis" }
+    Z_AXIS
+}
+
+export enum colorMode
+{
+    Hexadecimal,
+    RGB,
+    HSL
+}
+
+export enum falloffType
+{
+    Wave,
+    // Gaussian,
+    // Custom
+
+}
+
+const COLOR_VALUE_BOUNDS = { (unitless) : [0, 255, 255] } as IntegerBoundSpec;
+const COLOR_VALUE_BOUNDS_FAR = { (unitless) : [0, 50, 255] } as IntegerBoundSpec;
+
+annotation { "Feature Type Name" : "Attractor pattern", "Icon" : icon::BLOB_DATA }
+export const attractorPattern = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+        booleanStepTypePredicate(definition);
+
+        annotation { "Name" : "Pause regeneration" }
+        definition.pause is boolean;
+
+        if (definition.pause)
+        {
+            annotation { "Name" : "Preview points", "Default" : true }
+            definition.preview is boolean;
+        }
+
+
+        annotation { "Group Name" : "Pattern inputs", "Collapsed By Default" : false }
+        {
+            annotation { "Name" : "Base surface", "Filter" : EntityType.FACE, "MaxNumberOfPicks" : 1, "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.baseSrf is Query;
+
+
+            annotation { "Name" : "Input from same studio", "Default" : false, "UIHint" : UIHint.REMEMBER_PREVIOUS_VALUE }
+            definition.sameStudio is boolean;
+            if (definition.sameStudio)
+            {
+                annotation { "Name" : "Input body", "Filter" : EntityType.BODY && (BodyType.SOLID || BodyType.SHEET), "MaxNumberOfPicks" : 1 }
+                definition.customStudioBody is Query;
+                annotation { "Name" : "Mate connector", "Filter" : BodyType.MATE_CONNECTOR, "MaxNumberOfPicks" : 1 }
+                definition.customBodyMate is Query;
+            }
+            else
+            {
+                annotation { "Name" : "Input body" }
+                definition.customBody is PartStudioData;
+            }
+
+            annotation { "Name" : "Flip body" }
+            definition.flipBase is boolean;
+
+            annotation { "Name" : "Attractors", "Filter" : EntityType.VERTEX || EntityType.EDGE || EntityType.FACE || EntityType.BODY }
+            definition.attractors is Query;
+        }
+
+        annotation { "Group Name" : "Grid parameters", "Collapsed By Default" : true }
+        {
+
+            annotation { "Name" : "Grid type", "UIHint" : UIHint.SHOW_LABEL }
+            definition.gridType is gridType;
+
+            if (definition.gridType != gridType.Random)
+            {
+                annotation { "Name" : "U count" }
+                isInteger(definition.uCount, { (unitless) : [1, 5, 1e5] } as IntegerBoundSpec);
+
+                annotation { "Name" : "V count" }
+                isInteger(definition.vCount, { (unitless) : [1, 5, 1e5] } as IntegerBoundSpec);
+            }
+
+            if (definition.gridType == gridType.Random)
+            {
+                annotation { "Name" : "Instance count" }
+                isInteger(definition.randomCount, { (unitless) : [0, 50, 10000] } as IntegerBoundSpec);
+
+                annotation { "Name" : "Seed number" }
+                isInteger(definition.seedNum, POSITIVE_COUNT_BOUNDS);
+            }
+
+            annotation { "Name" : "Grid rotation" }
+            isAngle(definition.gridRotation, { (degree) : [0, 0, 360] } as AngleBoundSpec);
+            annotation { "Name" : "Flip grid rotation", "UIHint" : UIHint.OPPOSITE_DIRECTION_CIRCULAR }
+            definition.flipGridRotation is boolean;
+            annotation { "Name" : "Border" }
+            isLength(definition.border, { (millimeter) : [0, 0, 1e5] } as LengthBoundSpec);
+        }
+
+        annotation { "Group Name" : "Instance parameters", "Collapsed By Default" : true }
+        {
+            annotation { "Name" : "Scale", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.scaleBool is boolean;
+            if (definition.scaleBool)
+            {
+                annotation { "Name" : "Uniformly", "Default" : true, "UIHint" : UIHint.DISPLAY_SHORT }
+                definition.scaleUniformly is boolean;
+                if (definition.scaleUniformly)
+                {
+                    annotation { "Name" : "Near" }
+                    isReal(definition.scaleNear, SCALE_BOUNDS);
+                    annotation { "Name" : "Far" }
+                    isReal(definition.scaleFar, { (unitless) : [0.00000001, 1, 10000] } as RealBoundSpec);
+                }
+
+                else
+                {
+                    // TODO: edit logic so it matches last uniform input, so it doesn't change when switching to NU scale
+                    annotation { "Name" : "Near X" }
+                    isReal(definition.xScaleNear, SCALE_BOUNDS);
+                    annotation { "Name" : "Far X" }
+                    isReal(definition.xScaleFar, { (unitless) : [0.00000001, 1, 10000] } as RealBoundSpec);
+
+                    annotation { "Name" : "Near Y" }
+                    isReal(definition.yScaleNear, SCALE_BOUNDS);
+                    annotation { "Name" : "Far Y" }
+                    isReal(definition.yScaleFar, { (unitless) : [0.00000001, 1, 10000] } as RealBoundSpec);
+
+                    annotation { "Name" : "Near Z" }
+                    isReal(definition.zScaleNear, SCALE_BOUNDS);
+                    annotation { "Name" : "Far Z" }
+                    isReal(definition.zScaleFar, { (unitless) : [0.00000001, 1, 10000] } as RealBoundSpec);
+                }
+            }
+
+            annotation { "Name" : "Depth", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.depthBool is boolean;
+
+            if (definition.depthBool)
+            {
+                annotation { "Name" : "Near" }
+                isLength(definition.depthNear, { (millimeter) : [-1000000, 1, 1000000] } as LengthBoundSpec);
+                annotation { "Name" : "depthNearFlip", "UIHint" : UIHint.OPPOSITE_DIRECTION }
+                definition.depthNearFlip is boolean;
+
+
+                annotation { "Name" : "Far" }
+                isLength(definition.depthFar, { (millimeter) : [-1000000, 0, 1000000] } as LengthBoundSpec);
+                annotation { "Name" : "depthFarFlip", "UIHint" : UIHint.OPPOSITE_DIRECTION }
+                definition.depthFarFlip is boolean;
+            }
+
+            annotation { "Name" : "Rotation", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.rotationBool is boolean;
+
+            if (definition.rotationBool)
+            {
+                annotation { "Name" : "Axis", "Default" : rotationAxis.Z_AXIS, "UIHint" : UIHint.DISPLAY_SHORT }
+                definition.axis is rotationAxis;
+
+                annotation { "Name" : "Near" }
+                isAngle(definition.angleNear, { (degree) : [-100000, 30, 100000] } as AngleBoundSpec);
+                annotation { "Name" : "Flip near", "UIHint" : UIHint.OPPOSITE_DIRECTION_CIRCULAR }
+                definition.angleNearFlip is boolean;
+
+                annotation { "Name" : "Far" }
+                isAngle(definition.angleFar, { (degree) : [-100000, 0, 100000] } as AngleBoundSpec);
+                annotation { "Name" : "Flip near", "UIHint" : UIHint.OPPOSITE_DIRECTION_CIRCULAR }
+                definition.angleFarFlip is boolean;
+            }
+
+            //TODO
+            // annotation { "Name" : "Pull" }
+            // definition.pullBool is boolean;
+
+            // if (definition.pullBool)
+            // {
+            //     annotation { "Name" : "Near" }
+            //     isLength(definition.nearPull, { (millimeter) : [-100000, 10, 100000] } as LengthBoundSpec);
+            //     annotation { "Name" : "Far" }
+            //     isLength(definition.farPull, { (millimeter) : [-100000, 0, 100000] } as LengthBoundSpec);
+            // }
+
+            annotation { "Name" : "Color", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.colorBool is boolean;
+
+            if (definition.colorBool)
+            {
+                annotation { "Name" : "Color mode", "UIHint" : UIHint.DISPLAY_SHORT }
+                definition.colorMode is colorMode;
+                if (definition.colorMode == colorMode.RGB)
+                {
+                    // UI label hack
+                    annotation { "Name" : "-", "UIHint" : [UIHint.READ_ONLY, UIHint.FIRST_IN_ROW, UIHint.DISPLAY_SHORT], "Default" : "|" }
+                    definition.RGBnear is string;
+                    annotation { "Name" : "Near color label", "UIHint" : [UIHint.READ_ONLY, UIHint.DISPLAY_SHORT], "Default" : "Near RGB" }
+                    definition.RGBnear2 is string;
+
+                    // RGB values
+                    annotation { "Name" : "Near red", "UIHint" : [UIHint.DISPLAY_SHORT, UIHint.FIRST_IN_ROW] }
+                    isInteger(definition.redNear, COLOR_VALUE_BOUNDS);
+                    annotation { "Name" : "Near green", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isInteger(definition.greenNear, COLOR_VALUE_BOUNDS);
+                    annotation { "Name" : "Near blue", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isInteger(definition.blueNear, COLOR_VALUE_BOUNDS);
+
+                    // UI label hack
+                    annotation { "Name" : "-", "UIHint" : [UIHint.READ_ONLY, UIHint.FIRST_IN_ROW, UIHint.DISPLAY_SHORT], "Default" : "|" }
+                    definition.RGBfar is string;
+                    annotation { "Name" : "Far color label", "UIHint" : [UIHint.READ_ONLY, UIHint.DISPLAY_SHORT], "Default" : "Far RGB" }
+                    definition.RGBfar2 is string;
+
+                    // RGB values
+                    annotation { "Name" : "Far", "UIHint" : [UIHint.DISPLAY_SHORT, UIHint.FIRST_IN_ROW] }
+                    isInteger(definition.redFar, COLOR_VALUE_BOUNDS_FAR);
+                    annotation { "Name" : "Far green", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isInteger(definition.greenFar, COLOR_VALUE_BOUNDS_FAR);
+                    annotation { "Name" : "Far blue", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isInteger(definition.blueFar, COLOR_VALUE_BOUNDS_FAR);
+                }
+                if (definition.colorMode == colorMode.Hexadecimal)
+                {
+                    annotation { "Name" : "Near #", "Default" : "FFFFFF" }
+                    definition.nearHexCode is string;
+                    annotation { "Name" : "Far #", "Default" : "00F0F0" }
+                    definition.farHexCode is string;
+                }
+                if (definition.colorMode == colorMode.HSL)
+                {
+                    // UI label hack
+                    annotation { "Name" : "-", "UIHint" : [UIHint.READ_ONLY, UIHint.FIRST_IN_ROW, UIHint.DISPLAY_SHORT], "Default" : "|" }
+                    definition.HSLnear is string;
+                    annotation { "Name" : "Near color label", "UIHint" : [UIHint.READ_ONLY, UIHint.DISPLAY_SHORT], "Default" : "Near HSL" }
+                    definition.HSLnear2 is string;
+
+                    // RGB values
+                    annotation { "Name" : "Near hue", "UIHint" : [UIHint.DISPLAY_SHORT, UIHint.FIRST_IN_ROW] }
+                    isInteger(definition.hueNear, HUE_BOUNDS);
+                    annotation { "Name" : "Near saturation", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isReal(definition.saturationNear, SATURATION_VALUE_BOUNDS);
+                    annotation { "Name" : "Near luminance", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isReal(definition.luminanceNear, SATURATION_VALUE_BOUNDS);
+
+                    // UI label hack
+                    annotation { "Name" : "-", "UIHint" : [UIHint.READ_ONLY, UIHint.FIRST_IN_ROW, UIHint.DISPLAY_SHORT], "Default" : "|" }
+                    definition.HSLfar is string;
+                    annotation { "Name" : "Far color label", "UIHint" : [UIHint.READ_ONLY, UIHint.DISPLAY_SHORT], "Default" : "Far HSL" }
+                    definition.HSLfar2 is string;
+
+                    // RGB values
+                    annotation { "Name" : "Far hue", "UIHint" : [UIHint.DISPLAY_SHORT, UIHint.FIRST_IN_ROW] }
+                    isInteger(definition.hueFar, HUE_BOUNDS);
+                    annotation { "Name" : "Far saturation", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isReal(definition.saturationFar, SATURATION_VALUE_BOUNDS);
+                    annotation { "Name" : "Far luminance", "UIHint" : UIHint.DISPLAY_SHORT }
+                    isReal(definition.luminanceFar, SATURATION_VALUE_BOUNDS);
+                }
+                annotation { "Name" : "Near alpha" }
+                isInteger(definition.alphaNear, COLOR_VALUE_BOUNDS);
+                annotation { "Name" : "Far alpha" }
+                isInteger(definition.alphaFar, COLOR_VALUE_BOUNDS);
+            }
+        }
+
+        annotation { "Group Name" : "Pattern parameters", "Collapsed By Default" : true }
+        {
+
+            annotation { "Name" : "Range", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.rangeBool is boolean;
+
+            if (definition.rangeBool)
+            {
+                annotation { "Name" : "Near Range",
+                            "Description" : "Sets the reach of the attractor's influence, and anything farther than than the range uses the far value. " }
+                isLength(definition.nearRange, { (millimeter) : [0, 0, 1000000] } as LengthBoundSpec);
+                annotation { "Name" : "Far Range",
+                            "Description" : "Sets the reach of the attractor's influence, and anything farther than than the range uses the far value. " }
+                isLength(definition.farRange, LENGTH_BOUNDS);
+            }
+
+            annotation { "Name" : "Cutoff", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.cutoffBool is boolean;
+            if (definition.cutoffBool)
+            {
+                annotation { "Name" : "Cutoff", "UIHint" : UIHint.DISPLAY_SHORT, "Description" : "Removes instances farther from the attractor than the cutoff value." }
+                isLength(definition.cutoff, LENGTH_BOUNDS);
+            }
+
+            //TODO add falloff. should at least have enum with curve types like: Wave, Wave with decay, gaussian, parabolic. More advanced will allow the user to draw a falloff curve on the top plane.
+            annotation { "Name" : "Falloff", "UIHint" : UIHint.DISPLAY_SHORT }
+            definition.falloffBool is boolean;
+            if (definition.falloffBool)
+            {
+                annotation { "Name" : "Falloff shape", "UIHint" : UIHint.DISPLAY_SHORT }
+                definition.falloff is falloffType;
+
+                if (definition.falloff == falloffType.Wave)
+                {
+                    annotation { "Name" : "Number of waves" }
+                    isReal(definition.waves, { (unitless) : [0, .5, 1000000] } as RealBoundSpec);
+                    annotation { "Name" : "Decay", "UIHint" : UIHint.DISPLAY_SHORT }
+                    definition.decayBool is boolean;
+                    if (definition.decayBool)
+                    {
+                        annotation { "Name" : "Decay", "UIHint" : UIHint.DISPLAY_SHORT }
+                        isLength(definition.decay, { (millimeter) : [-1000000, 50, 1000000] } as LengthBoundSpec);
+                    }
+                }
+            }
+
+            // if (definition.falloffBool)
+            // {
+            //     annotation { "Name" : "Falloff graph curve", "Filter" : EntityType.EDGE && SketchObject.YES, "Description" : "Controls the way the values gradate. If nothing is selected, the values are linear. The reference curve must be (1) sketched on the Top plane, (2) a function of the X-direction (put another way, for any X value, there must be only 1 Y value" }
+            //     definition.myQuery is Query;
+            // }
+        }
+        if (definition.operationType != NewBodyOperationType.NEW)
+        {
+            annotation { "Name" : "Merge with all" }
+            definition.merge is boolean;
+
+            if (!definition.merge)
+            {
+                annotation { "Name" : "Merge scope", "Filter" : EntityType.BODY && BodyType.SOLID }
+                definition.mergeScope is Query;
+            }
+        }
+        else
+        {
+            annotation { "Name" : "Make composite part", "Default" : true }
+            definition.composite is boolean;
+
+        }
+        annotation { "Name" : "Keep inputs" }
+        definition.keep is boolean;
+
+    }
+    {
+        if (definition.pause)
+        {
+            reportFeatureWarning(context, id, "Regeneration is paused.");
+            
+            if (definition.pause && definition.preview)
+            {
+                const previewPoints = createPointsOnSurface(context, id, definition).previewPoints;
+                for (var point in previewPoints)
+                {
+                    addDebugPoint(context, point, DebugColor.MAGENTA);
+                }
+            }
+        }
+        else
+        {
+            var bodyMate;
+            var inputBody;
+
+                // Main inputs
+                const baseSrf = definition.baseSrf;
+
+                const attractors = definition.attractors;
+
+                var test = definition.customBodyMate.subqueries == [];
+                if (definition.sameStudio)
+                {
+                    inputBody = definition.customStudioBody;
+                    if (definition.customBodyMate.subqueries == [])
+                    {
+                        bodyMate = WORLD_COORD_SYSTEM;
+                    }
+                    else
+                    {
+
+                        bodyMate = evMateConnector(context, {
+                                    "mateConnector" : definition.customBodyMate
+                                });
+                    }
+                }
+                else
+                {
+                    const instantiator = newInstantiator(id + "customBody");
+                    addInstance(instantiator, definition.customBody, {
+                            });
+                    instantiate(context, instantiator);
+                    inputBody = qCreatedBy(id + "customBody", EntityType.BODY);
+                    bodyMate = WORLD_COORD_SYSTEM;
+                }
+
+                if (definition.flipBase)
+                {
+                    bodyMate.zAxis = bodyMate.zAxis * (-1);
+                }
+
+                const patternBodyType = definition.patternBodyType;
+                var instance;
+
+                // instance parameters
+                var edgeLength = definition.edgeLength;
+                var pointsOnSurface = createPointsOnSurface(context, id, definition);
+                var tanPlanes = pointsOnSurface.tanPlanes;
+                var distances = pointsOnSurface.distances;
+
+            // Feature warnings
+            var warningCount = size(tanPlanes);
+            if (warningCount > 1000 && warningCount < 5000)
+            {
+                reportFeatureInfo(context, id, "Creating " ~ toString(warningCount) ~ " instances. Expect slow performance");
+            }
+            else if (warningCount > 5000 && warningCount < 10000)
+            {
+                reportFeatureInfo(context, id, "Creating " ~ toString(warningCount) ~ " instances, which is really really high. Do you need this much detail?");
+            }
+            else if (warningCount > 10000)
+            {
+                reportFeatureInfo(context, id, "Creating " ~ toString(warningCount) ~ " instances. R.I.P. your rebuild time.");
+            }
+
+            var measuredMin = min(distances);
+            var measuredMax = max(distances);
+
+            // Creates wave falloff
+            if (definition.falloffBool && definition.falloff == falloffType.Wave)
+            {
+                var e = 100;
+                var decay;
+                var frequency = measuredMax / (definition.waves);
+
+                var amplitude = measuredMax / 2;
+                for (var i = 0; i < size(distances); i += 1)
+                {
+                    if (definition.decay == 0 * meter || !definition.decayBool)
+                    {
+                        decay = 1;
+                    }
+                    else
+                    {
+                        // units issue in "decay". want unitless distance, but how?
+                        decay = e ^ ((-distances[i] * (1 / definition.decay)));
+                    }
+                    distances[i] = -(amplitude * (decay) * cos(distances[i] * (360 * degree / frequency))) + abs(amplitude);
+                }
+            }
+            if (definition.rangeBool)
+            {
+                measuredMax = definition.farRange;
+                measuredMin = definition.nearRange;
+            }
+
+            // csys
+            var transforms = [];
+            var instanceNames = [];
+
+            // MIN AND MAX SETUPS
+
+            // angle variables
+            var angleNear = definition.angleNear;
+            if (definition.angleNearFlip)
+            {
+                angleNear = -angleNear;
+            }
+            var angleFar = definition.angleFar;
+            if (definition.angleFarFlip)
+            {
+                angleFar = -angleFar;
+            }
+
+            // scale variables
+            var scaleNear = { "x" : definition.scaleNear, "y" : definition.scaleNear, "z" : definition.scaleNear };
+            var scaleFar = { "x" : definition.scaleFar, "y" : definition.scaleFar, "z" : definition.scaleFar };
+            if (!definition.scaleUniformly)
+            {
+                scaleNear = { "x" : definition.xScaleNear, "y" : definition.yScaleNear, "z" : definition.zScaleNear };
+                scaleFar = { "x" : definition.xScaleFar, "y" : definition.yScaleFar, "z" : definition.zScaleFar };
+            }
+
+            // depth variables
+            var depthNear = definition.depthNear;
+            if (definition.depthNearFlip)
+            {
+                depthNear = -definition.depthNear;
+            }
+
+            var depthFar = definition.depthFar;
+            if (definition.depthFarFlip)
+            {
+                depthFar = -definition.depthFar;
+            }
+            // TODO figure out how to do "Pull" to move instances toward the attractor
+
+            //CREATE TRANSFORMS
+            // rotation axis type
+            var angleAxis;
+            if (definition.axis == rotationAxis.X_AXIS)
+            {
+                angleAxis = line(bodyMate.origin, bodyMate.xAxis);
+            }
+            else if (definition.axis == rotationAxis.Y_AXIS)
+            {
+                angleAxis = line(bodyMate.origin, yAxis(bodyMate));
+            }
+            else if (definition.axis == rotationAxis.Z_AXIS)
+            {
+                angleAxis = line(bodyMate.origin, bodyMate.zAxis);
+            }
+            var newDistances = [];
+            for (var i = 0; i < size(tanPlanes); i += 1)
+            {
+
+                // if farther than "Cutoff", skip the rest of the loop
+                if (definition.cutoffBool)
+                {
+                    if (distances[i] > definition.cutoff)
+                    {
+                        continue;
+                    }
+                }
+                // if "Range", replace the measured max value with the user's input value
+                if (definition.rangeBool)
+                {
+                    if (distances[i] < definition.nearRange)
+                    {
+                        distances[i] = definition.nearRange;
+                    }
+                    else if (distances[i] > definition.farRange)
+                    {
+                        distances[i] = definition.farRange;
+                    }
+                }
+
+                // part rotation
+                var angleTransform = identityTransform();
+                if (definition.rotationBool)
+                {
+                    var remapAngle = remap(distances[i], measuredMin, measuredMax, angleNear, angleFar);
+                    angleTransform = rotationAround(angleAxis, remapAngle);
+                }
+
+                // scale
+                var scaleTransform = identityTransform();
+                if (definition.scaleBool)
+                {
+                    var remapX = remap(distances[i], measuredMin, measuredMax, scaleNear.x, scaleFar.x);
+                    var remapY = remap(distances[i], measuredMin, measuredMax, scaleNear.y, scaleFar.y);
+                    var remapZ = remap(distances[i], measuredMin, measuredMax, scaleNear.z, scaleFar.z);
+                    scaleTransform = scaleNonuniformly(remapX, remapY, remapZ, bodyMate);
+                }
+
+                // depth
+                var newCsys = coordSystem(tanPlanes[i]);
+                var remapDepth = remap(distances[i], measuredMin, measuredMax, depthNear, depthFar);
+                if (definition.depthBool)
+                {
+                    newCsys.origin = tanPlanes[i].origin - normalize(tanPlanes[i].normal) * remapDepth;
+                }
+
+                // move from world to surface coordinates (moved by depth)
+                var csysTransform = transformByMateConnector(context, id, bodyMate, newCsys);
+
+                // these show up in reverse order of the execution
+                var transform = csysTransform * angleTransform * scaleTransform;
+
+                transforms = append(transforms, transform);
+                instanceNames = append(instanceNames, "instance" ~ toString(i));
+                newDistances = append(newDistances, distances[i]);
+            }
+            // create a new list of distances that doesn't have the culled instances in the list (this makes sure the color values end up going to the correct pattern body)
+            distances = newDistances;
+
+            // pattern the input body to each csys on the surface
+            opPattern(context, id + "pattern1", {
+                        "entities" : inputBody,
+                        "transforms" : transforms,
+                        "instanceNames" : instanceNames
+                    });
+
+            var patternedBodies = qCreatedBy(id + "pattern1", EntityType.BODY);
+            var bodyArray = evaluateQuery(context, patternedBodies);
+
+
+            //COLOR
+            if (definition.colorBool == true)
+            {
+                var RGBnear;
+                var RGBfar;
+                var alphaNear = 1 / 255 * definition.alphaNear;
+                var alphaFar = 1 / 255 * definition.alphaFar;
+
+                // if RGB color mode
+                if (definition.colorMode == colorMode.RGB)
+                {
+                    var redNear = 1 / 255 * definition.redNear;
+                    var greenNear = 1 / 255 * definition.greenNear;
+                    var blueNear = 1 / 255 * definition.blueNear;
+                    RGBnear = { "r" : redNear, "g" : greenNear, "b" : blueNear };
+
+                    var redFar = 1 / 255 * definition.redFar;
+                    var greenFar = 1 / 255 * definition.greenFar;
+                    var blueFar = 1 / 255 * definition.blueFar;
+                    RGBfar = { "r" : redFar, "g" : greenFar, "b" : blueFar };
+
+                }
+                // if HEXADECIMAL color mode
+                if (definition.colorMode == colorMode.Hexadecimal)
+                {
+                    RGBnear = hexCode(definition.nearHexCode);
+                    RGBfar = hexCode(definition.farHexCode);
+                }
+
+                // if HSL color mode
+                if (definition.colorMode == colorMode.HSL)
+                {
+                    RGBnear = colorHsl(definition.hueNear, definition.saturationNear, definition.luminanceNear);
+                    RGBfar = colorHsl(definition.hueFar, definition.saturationFar, definition.luminanceFar);
+                }
+
+                for (var i = 0; i < size(bodyArray); i += 1)
+                {
+                    var alphaRemap = clamp(remap(distances[i], measuredMin, measuredMax, alphaNear, alphaFar), 0, 1);
+                    var redRemap = clamp(remap(distances[i], measuredMin, measuredMax, RGBnear.r, RGBfar.r), 0, 1);
+                    var greenRemap = clamp(remap(distances[i], measuredMin, measuredMax, RGBnear.g, RGBfar.g), 0, 1);
+                    var blueRemap = clamp(remap(distances[i], measuredMin, measuredMax, RGBnear.b, RGBfar.b), 0, 1);
+                    setProperty(context, {
+                                "entities" : qOwnedByBody(bodyArray[i], EntityType.FACE),
+                                "propertyType" : PropertyType.APPEARANCE,
+                                "value" : color(redRemap, greenRemap, blueRemap, alphaRemap),
+                                "allowFaces" : true
+                            });
+                }
+            }
+            // defining rules for boolean type and executing the opBoolean
+            var boolType;
+            var mergeScope;
+
+            //TODO merge with all
+            if (definition.merge)
+            {
+                mergeScope = qEverything(EntityType.BODY && BodyType.SOLID);
+            }
+            else
+            {
+                mergeScope = definition.mergeScope;
+            }
+            if (definition.operationType != NewBodyOperationType.NEW)
+            {
+                if (definition.operationType == NewBodyOperationType.ADD)
+                {
+                    boolType = BooleanOperationType.UNION;
+                    patternedBodies = qUnion([definition.mergeScope, patternedBodies]);
+                }
+                if (definition.operationType == NewBodyOperationType.REMOVE)
+                {
+                    boolType = BooleanOperationType.SUBTRACTION;
+                }
+                if (definition.operationType == NewBodyOperationType.INTERSECT)
+                {
+                    boolType = BooleanOperationType.SUBTRACT_COMPLEMENT;
+                }
+
+                booleanBodies(context, id, {
+                            "tools" : patternedBodies,
+                            "targets" : mergeScope,
+                            "operationType" : boolType,
+                        });
+            }
+            else
+            {
+                if (definition.composite)
+                {
+                    opCreateCompositePart(context, id + "compositePart1", {
+                                "bodies" : patternedBodies,
+                                "closed" : true
+                            });
+                }
+                else
+                {
+                    for (var i = 0; i < size(bodyArray); i += 1)
+                    {
+                        setProperty(context, {
+                                    "entities" : bodyArray[i],
+                                    "propertyType" : PropertyType.NAME,
+                                    "value" : "Pattern body " ~ toString(i + 1)
+                                });
+                    }
+
+                }
+            }
+            if (!definition.keep)
+            {
+                opDeleteBodies(context, id + "deleteBodies1", {
+                            "entities" : inputBody
+                        });
+            }
+        }
+    });
+
+function createPointsOnSurface(context is Context, id is Id, definition is map) returns map
+{
+    const baseSrf = definition.baseSrf;
+    var tanPlane;
+    var tanPlanes = [];
+    var previewPoints = [];
+    var distance;
+    var distances = [];
+
+    // setup for grid loops
+    var uRange = range(0, 2, 2 * definition.uCount);
+    var vRange = range(0, 2, 2 * definition.vCount);
+    var uCount = size(uRange);
+    var vCount = size(vRange);
+    var uUnit = uRange[1];
+    var vUnit = vRange[1];
+    var point = vector(0, 0);
+    var points = [];
+    var gridRotation;
+    if (definition.flipGridRotation)
+    {
+        gridRotation = definition.gridRotation;
+    }
+    else
+    {
+        gridRotation = -definition.gridRotation;
+    }
+    var rotMatrix = gen2dRotMat(gridRotation);
+    var gridMatrix = zeroMatrix(2 * definition.uCount, 2 * definition.vCount);
+
+    //rectangular or triangular grid
+    if (definition.gridType == gridType.Rectangular || definition.gridType == gridType.Triangular)
+    {
+        var rowOffset = 0;
+        for (var i = 1; i < uCount; i += 1)
+        {
+
+            for (var j = 1; j < vCount; j += 1)
+            {
+
+                // generate a matrix of points that's big enough to rotate and still fill the 0to1 unit square
+                point[0] = (uUnit * i) - (uUnit / 2) - 0.5;
+                point[1] = (vUnit * j) - (vUnit / 2) - 0.5 + (rowOffset * vUnit / 2);
+                point = (rotMatrix * (point - vector(.5, .5))) + vector(.5, .5);
+
+                // only use points in the 0to1 domain for x and y
+                if (point[0] > 0 && point[0] < 1 && point[1] > 0 && point[1] < 1)
+                {
+                    points = append(points, point);
+                }
+            }
+            if (definition.gridType == gridType.Triangular)
+            {
+                if (rowOffset == 1)
+                {
+                    rowOffset = 0;
+                }
+                else
+                {
+                    rowOffset = 1;
+                }
+            }
+        }
+    }
+    if (definition.gridType == gridType.Random)
+    {
+        var seed = lcprng(definition.seedNum);
+        var uRandomNum;
+        var vRandomNum;
+        for (var i = 0; i < definition.randomCount; i += 1)
+        {
+            uRandomNum = remap(seed(), 0, 2 ^ 32 - 1, 0, 2);
+            vRandomNum = remap(seed(), 0, 2 ^ 32 - 1, 0, 2);
+            point[0] = uRandomNum;
+            point[1] = vRandomNum;
+            points = append(points, point);
+        }
+    }
+
+    // loop to create planes on the base surface and cull them if they fall off or are too close to the edge
+    var borderEdges = qLoopEdges(baseSrf);
+    for (var point in points)
+    {
+        // create grid of cSys on base surface
+        var tanPlane = evFaceTangentPlane(context, {
+                "face" : baseSrf,
+                "parameter" : point
+            });
+        // are points on the surface? if not, cull them. Points might not be on a surface if the surface has been trimmed.
+        var onSurface = qContainsPoint(baseSrf, tanPlane.origin);
+        if (evaluateQuery(context, onSurface) == evaluateQuery(context, qNothing()))
+        {
+            continue;
+        }
+        // are points closer to the baseSrf border edges than the user's "Border" value? if so, cull them.
+        var borderDist = evDistance(context, {
+                    "side0" : tanPlane.origin,
+                    "side1" : borderEdges
+                }).distance;
+        if (borderDist < definition.border)
+        {
+            continue;
+        }
+        tanPlanes = append(tanPlanes, tanPlane);
+        previewPoints = append(previewPoints, tanPlane.origin);
+        distance = evDistance(context, {
+                        "side0" : tanPlane.origin,
+                        "side1" : definition.attractors
+                    }).distance;
+        distances = append(distances, distance);
+    }
+    
+        return {"tanPlanes" : tanPlanes, "distances" : distances, "previewPoints" : previewPoints};
+        
+}
+
