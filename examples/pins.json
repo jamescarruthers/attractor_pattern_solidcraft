@@ -1,0 +1,18 @@
+{"commands": [
+  {"command": "solid.box", "params": {"length": 100, "width": 60, "height": 10, "body_name": "Plate"}},
+  {"command": "solid.cylinder", "params": {"radius": 2, "height": 6, "body_name": "Pin"}},
+  {"command": "plugin.run", "params": {
+    "plugin": "attractor-pattern",
+    "entry": "pattern",
+    "params": {
+      "body": "Pin",
+      "face": [50, 30, 10],
+      "face_body": "Plate",
+      "attractors": [[0, 0, 10]],
+      "grid": {"type": "triangular", "u_count": 10, "v_count": 6, "border": 3},
+      "scale": {"near": [2, 2, 3], "far": [0.5, 0.5, 1]},
+      "color": {"near": "#ff5a1f", "far": "#1f6fff"},
+      "operation": "join"
+    }
+  }}
+]}
