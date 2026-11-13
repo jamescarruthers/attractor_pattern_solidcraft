@@ -1,0 +1,35 @@
+{
+  "id": "attractor-pattern",
+  "name": "Attractor pattern",
+  "version": "0.1.0",
+  "description": "Copies a body over a face. Each copy is scaled, sunk, turned and coloured by its distance to attractors.",
+  "api": "0.1",
+  "component": "attractor_pattern.wasm",
+  "world": "command-plugin",
+  "entries": [
+    {
+      "name": "pattern",
+      "label": "Attractor pattern",
+      "params": "body; face: [x,y,z] | face name; face_body; attractors: [[x,y,z] | {point} | {line: [a, b]} | {edge, body} | {face, body} | {body}]; grid?: {type?: rectangular|triangular|random, u_count?, v_count?, count?, seed?, rotation?, border?}; scale?: {near, far} (number or [x,y,z]); depth?: {near, far}; rotation?: {axis?: x|y|z, near, far}; color?: {near, far (#rrggbb | [r,g,b] | {h,s,l}), near_alpha?, far_alpha?}; range?: {near, far}; cutoff?; falloff?: {waves?, decay?}; operation?: new|join|cut|intersect; merge_scope?: [bodies]; name_prefix?; keep_input?; body_frame?: {origin?, z_dir?, x_dir?}; flip_body?; flip_normal?"
+    },
+    {
+      "name": "preview",
+      "label": "Preview attractor pattern",
+      "kind": "action",
+      "effect": "read",
+      "params": "the same as pattern; returns where each copy would go and how it would change, without changing the design"
+    }
+  ],
+  "commands": [
+    "appearance.assign",
+    "body.rename",
+    "document.inspect",
+    "model.edges",
+    "model.faces",
+    "solid.combine",
+    "solid.move",
+    "solid.remove",
+    "solid.scale"
+  ],
+  "limits": { "memory_mib": 64, "transaction_seconds": 120 }
+}

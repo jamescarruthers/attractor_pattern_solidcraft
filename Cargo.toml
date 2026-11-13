@@ -1,0 +1,36 @@
+[package]
+name = "attractor-pattern"
+version = "0.1.0"
+edition = "2024"
+description = "SolidCraft plugin: pattern a body over a face, each copy scaled, sunk, turned and coloured by its distance to attractors"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Built on its own, not as a member of SolidCraft's workspace (as the draft plugin interface asks).
+[workspace]
+
+[lib]
+# cdylib: the WebAssembly component SolidCraft loads. rlib: the native tests and harnesses.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = "0.63"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
