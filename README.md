@@ -46,6 +46,21 @@ tool: tiles on a plate, studs round a post, and dimples cut into a panel. It ope
 plugin, because the copies are ordinary features. `examples/attractor-demo-script.json` is the
 script that made it; fill in the plugin folder and the approval from `plugin.inspect` to run it.
 
+### Picking with the mouse
+
+You can select things instead of typing their names. Select, in this order:
+
+1. the face to pattern on;
+2. the body to copy: the body itself, or any face or edge of it;
+3. any attractors: faces, edges and bodies (Shift-click to add to the selection).
+
+Then open the entry from the Plugins menu and leave **Face**, **Body with the face**, **Body to
+copy** and the attractor fields empty. Anything typed in a field is used instead of the
+selection. Attractors come from the selection only when every attractor field is empty, so you
+can type points and still pick the face and the body. The result's `from_selection` says what
+each pick was used for; run *Preview attractor pattern* first to check it. Keep the selection
+until the run finishes: the app drops a result made from a selection that has since changed.
+
 ### Parameters
 
 Lengths are in mm, angles in degrees. Points are text, `x, y, z`. Lists are text, items separated
@@ -53,9 +68,9 @@ by `;`. Empty fields take their defaults.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `body` | required | The body to copy. Model it at the origin, standing on XY and pointing up Z, or give its frame with `body_origin`, `body_z` and `body_x`. |
-| `face_body` | required | The body that owns the face. |
-| `face` | required | A point on the face, `x, y, z`, or the face's name from `model.faces`. Any face: see "Curved faces" below. |
+| `body` | the selection | The body to copy. Model it at the origin, standing on XY and pointing up Z, or give its frame with `body_origin`, `body_z` and `body_x`. |
+| `face_body` | the selection | The body that owns the face. |
+| `face` | the selection | A point on the face, `x, y, z`, or the face's name from `model.faces`. Any face: see "Curved faces" below. |
 | `attractor_points` | | `x, y, z; x, y, z; …` |
 | `attractor_lines` | | `x, y, z to x, y, z; …` |
 | `attractor_edges` | | `Body @ x, y, z; …`: the edge of that body through the point. |

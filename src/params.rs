@@ -57,6 +57,12 @@ pub struct Params {
     /// the body's size.
     #[serde(default)]
     pub mesh_tolerance: Option<f64>,
+    /// Engine calls made before planning (reading the selection).
+    #[serde(skip)]
+    pub calls_before: usize,
+    /// How the selection filled in the inputs, when it did.
+    #[serde(skip)]
+    pub from_selection: Option<serde_json::Value>,
 }
 
 fn default_levels() -> u32 {
@@ -283,7 +289,22 @@ pub fn parse(json: &str) -> Result<Params, String> {
     if json.len() > 1 << 20 {
         return Err("the parameters are larger than 1 MiB".into());
     }
-    let flat: Flat = serde_json::from_str(if json.trim().is_empty() { "{}" } else { json }).map_err(|e| format!("bad parameters: {e}"))?;
+    let flat = parse_flat(json)?;
+    let p = flat.into_params()?;
+    check(&p)?;
+    Ok(p)
+}
+
+/// The entry inputs as given, before the selection fills in what was left empty.
+pub fn parse_flat(json: &str) -> Result<Flat, String> {
+    if json.len() > 1 << 20 {
+        return Err("the parameters are larger than 1 MiB".into());
+    }
+    serde_json::from_str(if json.trim().is_empty() { "{}" } else { json }).map_err(|e| format!("bad parameters: {e}"))
+}
+
+/// Inputs as given, checked.
+pub fn finish(flat: Flat) -> Result<Params, String> {
     let p = flat.into_params()?;
     check(&p)?;
     Ok(p)
@@ -294,9 +315,12 @@ pub fn parse(json: &str) -> Result<Params, String> {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Flat {
-    pub body: String,
-    pub face_body: String,
-    pub face: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub face_body: Option<String>,
+    #[serde(default)]
+    pub face: Option<String>,
     #[serde(default)]
     pub attractor_points: Option<String>,
     #[serde(default)]
@@ -439,7 +463,7 @@ impl Flat {
             attractors.push(AttractorRef::Tagged(AttractorTagged { body: Some(it.to_owned()), ..AttractorTagged::default() }));
         }
         if attractors.is_empty() {
-            return Err("`attractor_points`: give at least one attractor (points, lines, edges, faces or bodies)".into());
+            return Err("`attractor_points`: give at least one attractor (points, lines, edges, faces or bodies), or select them after the face and the body to copy".into());
         }
 
         let d = Grid::default();
@@ -491,9 +515,9 @@ impl Flat {
         };
         let merge: Vec<String> = items(&self.merge_scope).into_iter().map(str::to_owned).collect();
         Ok(Params {
-            face: face_ref("face", &self.face)?,
-            body: self.body.trim().to_owned(),
-            face_body: self.face_body.trim().to_owned(),
+            face: face_ref("face", self.face.as_deref().filter(|t| !t.trim().is_empty()).ok_or("`face`: give a point on the face or its name, or select the face before running")?)?,
+            body: self.body.as_deref().map(str::trim).filter(|t| !t.is_empty()).ok_or("`body`: name the body to copy, or select it before running")?.to_owned(),
+            face_body: self.face_body.as_deref().map(str::trim).filter(|t| !t.is_empty()).ok_or("`face_body`: name the body with the face, or select the face before running")?.to_owned(),
             flip_normal: self.flip_normal,
             body_frame,
             flip_body: self.flip_body,
@@ -511,6 +535,8 @@ impl Flat {
             keep_input: self.keep_input,
             levels: self.levels.unwrap_or_else(default_levels),
             mesh_tolerance: self.mesh_tolerance,
+            calls_before: 0,
+            from_selection: None,
         })
     }
 }

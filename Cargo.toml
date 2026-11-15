@@ -1,6 +1,6 @@
 [package]
 name = "attractor-pattern"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "SolidCraft plugin: pattern a body over a face, each copy scaled, sunk, turned and coloured by its distance to attractors"
 license = "MIT OR Apache-2.0"

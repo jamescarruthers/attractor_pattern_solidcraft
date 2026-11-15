@@ -15,6 +15,7 @@ pub mod grid;
 pub mod mesh;
 pub mod params;
 pub mod pattern;
+pub mod selection;
 pub mod surface;
 pub mod vec;
 
@@ -22,7 +23,14 @@ use engine::Engine;
 
 /// Run one entry with JSON parameters; returns the JSON result.
 pub fn execute(engine: &mut dyn Engine, entry: &str, params: &str) -> Result<String, String> {
-    let p = params::parse(params)?;
+    if entry != "pattern" && entry != "preview" {
+        return Err(format!("no entry `{entry}`; this plugin has `pattern` and `preview`"));
+    }
+    let mut flat = params::parse_flat(params)?;
+    let (calls_before, from_selection) = selection::fill(engine, &mut flat)?;
+    let mut p = params::finish(flat)?;
+    p.calls_before = calls_before;
+    p.from_selection = from_selection;
     let out = match entry {
         "pattern" => pattern::pattern(engine, &p)?,
         "preview" => pattern::preview(engine, &p)?,

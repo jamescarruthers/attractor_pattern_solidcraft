@@ -191,7 +191,7 @@ pub fn plan(engine: &mut dyn Engine, p: &Params) -> Result<Plan, String> {
         let frame = Frame { origin: frame.origin - frame.z * depth, ..frame };
         instances.push(Instance { frame, on_face, distance: d, angle, level });
     }
-    let calls_so_far = engine.calls;
+    let calls_so_far = engine.calls + p.calls_before;
     Ok(Plan {
         face_kind: face.kind(),
         candidates,
@@ -277,6 +277,7 @@ fn summary(p: &Params, plan: &Plan) -> Value {
         "culled": { "off_face": plan.off_face, "near_border": plan.near_border, "beyond_cutoff": plan.beyond_cutoff },
         "near_far_mm": plan.near_far,
         "budget": budget(p, plan),
+        "from_selection": p.from_selection,
     })
 }
 
