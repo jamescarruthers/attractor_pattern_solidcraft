@@ -38,6 +38,11 @@ The Plugins menu draws a form for each entry. Scripts, MCP and the CLI call them
 
 `examples/pins.json` holds parameters for pins on a plate.
 
+`examples/attractor-demo.sc` is a design made with the plugin in SolidCraft 0.41's command-line
+tool: tiles on a plate, studs round a post, and dimples cut into a panel. It opens without the
+plugin, because the copies are ordinary features. `examples/attractor-demo-script.json` is the
+script that made it; fill in the plugin folder and the approval from `plugin.inspect` to run it.
+
 ### Parameters
 
 Lengths are in mm, angles in degrees. Points are text, `x, y, z`. Lists are text, items separated
