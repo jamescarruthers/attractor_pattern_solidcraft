@@ -38,6 +38,9 @@ The Plugins menu draws a form for each entry. Scripts, MCP and the CLI call them
 
 `examples/pins.json` holds parameters for pins on a plate.
 
+`examples/attractor-curved-demo.sc` shows curved faces: beads on a torus, studs on a ball and
+spikes on a cone.
+
 `examples/attractor-demo.sc` is a design made with the plugin in SolidCraft 0.41's command-line
 tool: tiles on a plate, studs round a post, and dimples cut into a panel. It opens without the
 plugin, because the copies are ordinary features. `examples/attractor-demo-script.json` is the
@@ -52,12 +55,12 @@ by `;`. Empty fields take their defaults.
 |---|---|---|
 | `body` | required | The body to copy. Model it at the origin, standing on XY and pointing up Z, or give its frame with `body_origin`, `body_z` and `body_x`. |
 | `face_body` | required | The body that owns the face. |
-| `face` | required | A point on the face, `x, y, z`, or the face's name from `model.faces`. |
+| `face` | required | A point on the face, `x, y, z`, or the face's name from `model.faces`. Any face: see "Curved faces" below. |
 | `attractor_points` | | `x, y, z; x, y, z; …` |
 | `attractor_lines` | | `x, y, z to x, y, z; …` |
 | `attractor_edges` | | `Body @ x, y, z; …`: the edge of that body through the point. |
-| `attractor_faces` | | `Body @ x, y, z; …` or `Body @ face name; …` (planar and cylindrical faces). |
-| `attractor_bodies` | | `Body; Body; …`: the body's planar and cylindrical faces and all its edges. |
+| `attractor_faces` | | `Body @ x, y, z; …` or `Body @ face name; …`. |
+| `attractor_bodies` | | `Body; Body; …`: the distance to the body's surface, read from its mesh. |
 | `grid` | `rectangular` | `rectangular`, `triangular` (every other column shifted half a step) or `random`. |
 | `u_count`, `v_count` | 5, 5 | About how many copies across and along the face. |
 | `count`, `seed` | 50, 1 | Random grids: how many points, and the seed. |
@@ -79,6 +82,25 @@ by `;`. Empty fields take their defaults.
 | `flip_body` | false | Turns the body over before placing it. |
 | `flip_normal` | false | Flips the face normal, so copies stand on the other side. Use it for holes. |
 | `body_origin`, `body_z`, `body_x` | the world | The body's own frame. Its origin goes onto the face, `z` along the normal, `x` along the grid. |
+| `mesh_tolerance` | from the body's size | How closely the mesh of a curved face or body attractor follows the surface (mm). |
+
+## Curved faces
+
+Flat and cylindrical faces are read exactly, and the grid lies on them in rows, as in Onshape.
+
+Any other face (a torus, a sphere, a cone, a fillet round a corner, a loft) is read from the
+body's mesh (`model.mesh`, read-only). The face is the part of the mesh under the given point.
+The copies are spread evenly over it rather than in rows: about as many as the grid would put on
+a flat face (`u_count` × `v_count`), or `count` random ones for a random grid. Each point is lifted
+from the mesh's flat triangles towards the curved surface. On a 20 × 5 mm torus in testing, every
+copy sat within 0.04 mm of the true surface. Each copy's `x` axis runs round the face's main axis,
+as on a cylinder, and `grid_rotation` turns it.
+
+The mesh tolerance is chosen from the body's area so that the mesh stays within what the engine
+will hand to a plugin (8192 points); set `mesh_tolerance` to override it. A finer mesh that
+breaks that limit stops the run with "mesh exceeds the plugin transfer budget", and nothing
+changes. Curved faces of bodies inside a component are not supported yet, because the mesh is
+in the component's own coordinates.
 
 ## The 256-call limit
 
@@ -106,10 +128,11 @@ with SolidCraft's own Combine, which has no such limit.
 
 | Onshape | Here |
 |---|---|
-| Base surface: any face | Planar and cylindrical faces only. SolidCraft has no command that evaluates a face at a (u, v) parameter, so the plugin builds its own from `model.faces` and `model.edges`. Curved edges are traced as circular arcs through their start, middle and end points, so spline edges are approximated. Cylindrical faces are treated as untrimmed between their edges. |
+| Base surface: any face | Any face. SolidCraft has no command that evaluates a face at a (u, v) parameter, so flat and cylindrical faces are rebuilt from `model.faces` and `model.edges`, and other faces from the body's mesh (see "Curved faces"). Curved edges of flat faces are traced as circular arcs through their start, middle and end points, so spline edges are approximated. Cylindrical faces are treated as untrimmed between their edges. |
+| Grid rows on curved faces | Rows on flat and cylindrical faces; evenly spread points on other curved faces. |
 | Input body from another Part Studio | Not available: the body must be in the design. |
 | Mate connector | `body_origin`, `body_z`, `body_x`. |
-| Attractors: vertex, edge, face, body | Points, lines, edges, planar and cylindrical faces, and bodies. |
+| Attractors: vertex, edge, face, body | Points, lines, edges, faces and bodies. |
 | Scale and colour for every copy | In `levels` steps (see above). |
 | Grid U/V on the face's parameter space | The same lattice, on the plugin's parameterisation: for a plane, the box around its outline, aligned with its longest straight edge; for a cylinder, angle and height. |
 | Random grid | Points spread over the whole face. The original drew from twice the face's range, so most points fell off; asking for 50 now gives about 50 before culling. Seeds do not give the same layout as Onshape. |
@@ -131,6 +154,9 @@ Version 0.2.0 was also installed from its zip into SolidCraft 0.41's command-lin
 with scale, colour and turns; per-axis scale, turns and depth joined into the plate; spheres cut
 from a plate with a hole; studs around a cylinder; and the refusals for too many copies and for
 a point off the face. Each pattern was one undo step. The Plugins menu's form was not tried.
+
+Version 0.3.0 added curved faces and was run the same way: a torus (grid, random grid and
+preview), a sphere, the side of a cone, a body as attractor, and the flat plate again.
 
 ## Credit and licence
 

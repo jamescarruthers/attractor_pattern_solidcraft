@@ -53,6 +53,10 @@ pub struct Params {
     /// copy of the body, and a run has 256 engine calls in all.
     #[serde(default = "default_levels")]
     pub levels: u32,
+    /// Chord tolerance (mm) for the meshes of curved faces and body attractors; default: from
+    /// the body's size.
+    #[serde(default)]
+    pub mesh_tolerance: Option<f64>,
 }
 
 fn default_levels() -> u32 {
@@ -362,6 +366,8 @@ pub struct Flat {
     #[serde(default)]
     pub levels: Option<u32>,
     #[serde(default)]
+    pub mesh_tolerance: Option<f64>,
+    #[serde(default)]
     pub flip_body: bool,
     #[serde(default)]
     pub flip_normal: bool,
@@ -504,6 +510,7 @@ impl Flat {
             merge_scope: (!merge.is_empty()).then_some(merge),
             keep_input: self.keep_input,
             levels: self.levels.unwrap_or_else(default_levels),
+            mesh_tolerance: self.mesh_tolerance,
         })
     }
 }
@@ -607,6 +614,9 @@ fn check(p: &Params) -> Result<(), String> {
         _ => {}
     }
     within("levels", p.levels.into(), 2.0, 64.0)?;
+    if let Some(t) = p.mesh_tolerance {
+        within("mesh_tolerance", t, 0.005, 50.0)?;
+    }
     Ok(())
 }
 

@@ -12,6 +12,7 @@ pub mod attractor;
 pub mod colour;
 pub mod engine;
 pub mod grid;
+pub mod mesh;
 pub mod params;
 pub mod pattern;
 pub mod surface;

@@ -10,7 +10,6 @@
 use crate::attractor::{self, Bodies};
 use crate::colour;
 use crate::engine::{Engine, created_bodies, run};
-use crate::grid;
 use crate::params::{Axis, FalloffKind, MAX_CALLS, Operation, Params};
 use crate::vec::{Frame, M3, Rigid, V3, X, Y, Z, ZERO};
 use serde_json::{Value, json};
@@ -99,30 +98,18 @@ pub fn plan(engine: &mut dyn Engine, p: &Params) -> Result<Plan, String> {
     others.remove(at);
 
     let mut bodies = Bodies::default();
+    bodies.tolerance = p.mesh_tolerance;
     let face = attractor::find_face(engine, &mut bodies, &p.face_body, &p.face, p.flip_normal)?;
     let attractors = attractor::resolve(engine, &mut bodies, &p.attractors)?;
 
-    let uv = grid::points(&p.grid);
-    let candidates = uv.len();
-    let (mut off_face, mut near_border) = (0, 0);
-    let mut samples = Vec::new();
-    for [u, v] in uv {
-        let Some(s) = face.sample(u, v) else {
-            off_face += 1;
-            continue;
-        };
-        if s.border < p.grid.border {
-            near_border += 1;
-            continue;
-        }
-        let d = attractor::distance(&attractors, s.frame.origin);
-        if d.is_finite() {
-            samples.push((s.frame, d));
-        }
-    }
+    let found = face.samples(&p.grid);
+    let (candidates, off_face, near_border) = (found.candidates, found.off_face, found.near_border);
+    let samples: Vec<(Frame, f64)> =
+        found.list.into_iter().map(|s| (s.frame, attractor::distance(&attractors, s.frame.origin))).filter(|(_, d)| d.is_finite()).collect();
     if samples.is_empty() {
         return Err(format!("none of the {candidates} grid points landed on the face ({off_face} off it, {near_border} within the border)"));
     }
+    let mut samples = samples;
 
     let measured_min = samples.iter().map(|s| s.1).fold(f64::INFINITY, f64::min);
     let measured_max = samples.iter().map(|s| s.1).fold(f64::NEG_INFINITY, f64::max);
