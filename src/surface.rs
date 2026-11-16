@@ -29,6 +29,8 @@ pub struct EdgeInfo {
 pub struct FaceInfo {
     pub index: usize,
     #[serde(default)]
+    pub area: f64,
+    #[serde(default)]
     pub name: Option<String>,
     pub centroid: [f64; 3],
     #[serde(default)]
@@ -152,33 +154,68 @@ pub struct Sample {
 pub enum Surface {
     Plane(PlaneFace),
     Cylinder(CylinderFace),
+    /// Any other face, from the body's mesh.
+    Mesh(Box<crate::mesh::MeshFace>),
+}
+
+/// The points a grid puts on a face.
+pub struct Samples {
+    pub list: Vec<Sample>,
+    /// Grid points looked at.
+    pub candidates: usize,
+    /// Dropped because they fell off a trimmed face.
+    pub off_face: usize,
+    /// Dropped because they were nearer the face's edges than the border.
+    pub near_border: usize,
 }
 
 impl Surface {
-    /// The face at parameters (u, v) in 0..1, or `None` when that point is off the face.
-    pub fn sample(&self, u: f64, v: f64) -> Option<Sample> {
-        match self {
-            Surface::Plane(p) => p.sample(u, v),
-            Surface::Cylinder(c) => c.sample(u, v),
-        }
-    }
     /// The shortest distance from `p` to the face.
     pub fn distance_to(&self, p: V3) -> f64 {
         match self {
             Surface::Plane(f) => f.distance_to(p),
             Surface::Cylinder(f) => f.distance_to(p),
+            Surface::Mesh(f) => f.distance_to(p),
         }
     }
     pub fn kind(&self) -> &'static str {
         match self {
             Surface::Plane(_) => "plane",
             Surface::Cylinder(_) => "cylinder",
+            Surface::Mesh(_) => "curved (from the mesh)",
         }
+    }
+
+    /// The grid's points on the face, with their frames.
+    pub fn samples(&self, grid: &crate::params::Grid) -> Samples {
+        let (list, near_border) = match self {
+            Surface::Mesh(m) => m.samples(grid),
+            Surface::Plane(_) | Surface::Cylinder(_) => {
+                let uv = crate::grid::points(grid);
+                let candidates = uv.len();
+                let mut list = Vec::new();
+                let (mut off_face, mut near_border) = (0, 0);
+                for [u, v] in uv {
+                    let s = match self {
+                        Surface::Plane(p) => p.sample(u, v),
+                        Surface::Cylinder(c) => c.sample(u, v),
+                        Surface::Mesh(_) => None,
+                    };
+                    match s {
+                        None => off_face += 1,
+                        Some(s) if s.border < grid.border => near_border += 1,
+                        Some(s) => list.push(s),
+                    }
+                }
+                return Samples { list, candidates, off_face, near_border };
+            }
+        };
+        Samples { candidates: list.len() + near_border, list, off_face: 0, near_border }
     }
 }
 
-/// Build the surface of a face from its listing and its body's edges. `None` for a face that
-/// is neither planar nor cylindrical, or whose outline cannot be traced.
+/// Build the surface of a planar or cylindrical face from its listing and its body's edges.
+/// Other faces come from the body's mesh (`crate::mesh`).
 pub fn build(face: &FaceInfo, edges: &[EdgeInfo], flip_normal: bool) -> Result<Surface, String> {
     let label = face.name.clone().unwrap_or_else(|| format!("face {}", face.index));
     if let Some(n) = face.plane_normal {
@@ -503,7 +540,7 @@ mod tests {
             edge([0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [40.0, 0.0, 0.0]),
         ];
         edges.push(EdgeInfo { mid: [5.0, 10.0, z], length: TAU * 5.0, start: Some([15.0, 10.0, z]), end: Some([15.0, 10.0, z]) });
-        let face = FaceInfo { index: 0, name: Some("top".into()), centroid: [20.0, 10.0, z], plane_normal: Some([0.0, 0.0, 1.0]), point: Some([30.0, 5.0, z]), cylinder: None };
+        let face = FaceInfo { index: 0, area: 800.0, name: Some("top".into()), centroid: [20.0, 10.0, z], plane_normal: Some([0.0, 0.0, 1.0]), point: Some([30.0, 5.0, z]), cylinder: None };
         (face, edges)
     }
 
@@ -515,14 +552,14 @@ mod tests {
         assert_eq!(p.holes.len(), 1);
         // u runs along a 40 mm edge.
         assert!(p.u.x.abs() > 0.99);
-        let mid = s.sample(0.5, 0.5).unwrap();
+        let mid = p.sample(0.5, 0.5).unwrap();
         assert!((mid.frame.origin.z - 10.0).abs() < 1e-9);
         assert!((mid.frame.z.z - 1.0).abs() < 1e-9);
         // Nearest boundary: the hole, 10 mm away with a 5 mm radius.
         assert!((mid.border - 5.0).abs() < 1e-6, "{}", mid.border);
         // The hole centre is off the face.
         let hole_u = if p.u.x > 0.0 { 10.0 / 40.0 } else { 30.0 / 40.0 };
-        assert!(s.sample(hole_u, 0.5).is_none());
+        assert!(p.sample(hole_u, 0.5).is_none());
         assert!((s.distance_to(V3::new(20.0, 10.0, 15.0)) - 5.0).abs() < 1e-9);
         assert!((s.distance_to(V3::new(43.0, 10.0, 14.0)) - 5.0).abs() < 1e-9);
     }
@@ -535,9 +572,10 @@ mod tests {
             EdgeInfo { mid: [-r, 0.0, 30.0], length: TAU * r, start: Some([r, 0.0, 30.0]), end: Some([r, 0.0, 30.0]) },
             edge([r, 0.0, 0.0], [r, 0.0, 15.0], [r, 0.0, 30.0]),
         ];
-        let face = FaceInfo { index: 2, name: None, centroid: [0.0, 0.0, 15.0], plane_normal: None, point: Some([r, 0.0, 15.0]), cylinder: Some(CylinderInfo { origin: [0.0, 0.0, 0.0], axis: [0.0, 0.0, 1.0], radius: r }) };
+        let face = FaceInfo { index: 2, area: 942.0, name: None, centroid: [0.0, 0.0, 15.0], plane_normal: None, point: Some([r, 0.0, 15.0]), cylinder: Some(CylinderInfo { origin: [0.0, 0.0, 0.0], axis: [0.0, 0.0, 1.0], radius: r }) };
         let s = build(&face, &edges, false).unwrap();
-        let q = s.sample(0.25, 0.5).unwrap();
+        let Surface::Cylinder(c) = &s else { panic!("cylinder expected") };
+        let q = c.sample(0.25, 0.5).unwrap();
         assert!((q.frame.origin.dist(V3::new(0.0, r, 15.0))) < 1e-9);
         assert!((q.frame.z.dist(Y)) < 1e-9);
         assert!((q.border - 15.0).abs() < 1e-9);

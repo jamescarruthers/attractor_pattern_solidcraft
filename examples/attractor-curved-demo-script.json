@@ -1,0 +1,132 @@
+{
+ "commands": [
+  {
+   "command": "solid.torus",
+   "params": {
+    "major": "20 mm",
+    "minor": "5 mm",
+    "body_name": "Ring"
+   }
+  },
+  {
+   "command": "solid.sphere",
+   "params": {
+    "diameter": "2.4 mm",
+    "body_name": "Bead"
+   }
+  },
+  {
+   "command": "plugin.run",
+   "params": {
+    "path": "<plugins folder>/attractor-pattern",
+    "approval": "<approval from plugin.inspect>",
+    "entry": "pattern",
+    "params": {
+     "body": "Bead",
+     "face_body": "Ring",
+     "face": "25, 0, 0",
+     "attractor_points": "25, 0, 0",
+     "u_count": 14,
+     "v_count": 8,
+     "scale_near": 1.6,
+     "scale_far": 0.5,
+     "color_near": "#ff3b1f",
+     "color_far": "#1f5bff",
+     "levels": 10
+    }
+   }
+  },
+  {
+   "command": "solid.sphere",
+   "params": {
+    "radius": 30,
+    "center": [
+     90,
+     0,
+     0
+    ],
+    "body_name": "Ball"
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "length": 5,
+    "width": 5,
+    "height": 3,
+    "center": [
+     0,
+     0,
+     1.5
+    ],
+    "body_name": "Stud"
+   }
+  },
+  {
+   "command": "plugin.run",
+   "params": {
+    "path": "<plugins folder>/attractor-pattern",
+    "approval": "<approval from plugin.inspect>",
+    "entry": "pattern",
+    "params": {
+     "body": "Stud",
+     "face_body": "Ball",
+     "face": "90, 0, 30",
+     "attractor_points": "90, 0, 30",
+     "u_count": 11,
+     "v_count": 11,
+     "scale_near": 1.4,
+     "scale_far": 0.5,
+     "rotation_near": 0,
+     "rotation_far": 45,
+     "color_near": "hsl(45, 1, 0.5)",
+     "color_far": "hsl(280, 0.7, 0.4)",
+     "levels": 10
+    }
+   }
+  },
+  {
+   "command": "solid.cone",
+   "params": {
+    "radius": 22,
+    "height": 45,
+    "base": [
+     170,
+     0,
+     0
+    ],
+    "body_name": "Cone"
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 0.8,
+    "height": 4,
+    "body_name": "Spike"
+   }
+  },
+  {
+   "command": "plugin.run",
+   "params": {
+    "path": "<plugins folder>/attractor-pattern",
+    "approval": "<approval from plugin.inspect>",
+    "entry": "pattern",
+    "params": {
+     "body": "Spike",
+     "face_body": "Cone",
+     "face": "181, 0, 22.5",
+     "attractor_points": "170, 0, 45",
+     "u_count": 10,
+     "v_count": 6,
+     "border": 2,
+     "scale_near_xyz": "1, 1, 0.4",
+     "scale_far_xyz": "1, 1, 2",
+     "color_near": "#f2f2f2",
+     "color_far": "#2a9d8f",
+     "levels": 8
+    }
+   }
+  }
+ ]
+}

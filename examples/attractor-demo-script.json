@@ -1,0 +1,136 @@
+{
+ "commands": [
+  {
+   "command": "solid.box",
+   "params": {
+    "length": 120,
+    "width": 80,
+    "height": 5,
+    "body_name": "Plate"
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "length": 7,
+    "width": 7,
+    "height": 2,
+    "center": [
+     0,
+     0,
+     1
+    ],
+    "body_name": "Tile"
+   }
+  },
+  {
+   "command": "plugin.run",
+   "params": {
+    "path": "<plugins folder>/attractor-pattern",
+    "approval": "<approval from plugin.inspect>",
+    "entry": "pattern",
+    "params": {
+     "body": "Tile",
+     "face_body": "Plate",
+     "face": "60, 40, 5",
+     "attractor_points": "0, 0, 5",
+     "u_count": 12,
+     "v_count": 8,
+     "scale_near": 1.3,
+     "scale_far": 0.35,
+     "rotation_near": 0,
+     "rotation_far": 90,
+     "color_near": "#ff3b1f",
+     "color_far": "#1f5bff",
+     "levels": 10
+    }
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 15,
+    "height": 60,
+    "base": [
+     180,
+     40,
+     0
+    ],
+    "body_name": "Post"
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 1.5,
+    "height": 4,
+    "body_name": "Stud"
+   }
+  },
+  {
+   "command": "plugin.run",
+   "params": {
+    "path": "<plugins folder>/attractor-pattern",
+    "approval": "<approval from plugin.inspect>",
+    "entry": "pattern",
+    "params": {
+     "body": "Stud",
+     "face_body": "Post",
+     "face": "195, 40, 30",
+     "attractor_points": "195, 40, 30",
+     "u_count": 16,
+     "v_count": 6,
+     "scale_near": 2.2,
+     "scale_far": 0.6,
+     "color_near": "hsl(45, 1, 0.5)",
+     "color_far": "hsl(280, 0.7, 0.4)",
+     "levels": 10
+    }
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "length": 120,
+    "width": 80,
+    "height": 8,
+    "corner": [
+     0,
+     100,
+     0
+    ],
+    "body_name": "Panel"
+   }
+  },
+  {
+   "command": "solid.sphere",
+   "params": {
+    "radius": 3,
+    "body_name": "Ball"
+   }
+  },
+  {
+   "command": "plugin.run",
+   "params": {
+    "path": "<plugins folder>/attractor-pattern",
+    "approval": "<approval from plugin.inspect>",
+    "entry": "pattern",
+    "params": {
+     "body": "Ball",
+     "face_body": "Panel",
+     "face": "60, 140, 8",
+     "attractor_lines": "0, 100, 8 to 120, 180, 8",
+     "grid": "triangular",
+     "u_count": 11,
+     "v_count": 7,
+     "border": 4,
+     "scale_near": 1.2,
+     "scale_far": 0.4,
+     "operation": "cut",
+     "merge_scope": "Panel",
+     "levels": 6
+    }
+   }
+  }
+ ]
+}
